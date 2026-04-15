@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Super Platformer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #fff;
+    }
+    h1 {
+      font-size: 2rem;
+      color: #f5c542;
+      text-shadow: 2px 2px 0 #c0392b;
+      margin-bottom: 10px;
+      letter-spacing: 2px;
+    }
+    #hud {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 8px;
+      font-size: 1.1rem;
+      font-weight: bold;
+    }
+    #hud span { color: #f5c542; }
+    canvas {
+      border: 4px solid #f5c542;
+      border-radius: 4px;
+      display: block;
+      box-shadow: 0 0 30px rgba(245,197,66,0.3);
+    }
+    #controls {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: #aaa;
+      text-align: center;
+      line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+  <h1>SUPER PLATFORMER</h1>
+  <div id="hud">
+    <div>SCORE: <span id="scoreDisplay">0</span></div>
+    <div>LIVES: <span id="livesDisplay">3</span></div>
+    <div>COINS: <span id="coinsDisplay">0</span></div>
+  </div>
+  <canvas id="gameCanvas" width="800" height="480"></canvas>
+  <div id="controls">
+    Arrow Keys / WASD: Move &amp; Jump &nbsp;|&nbsp; Space: Jump &nbsp;|&nbsp;
+    Stomp enemies to defeat them &nbsp;|&nbsp; Collect all coins to win!
+  </div>
+
+<script>
+// ─────────────────────────────────────────────
+//  Constants & helpers
+// ─────────────────────────────────────────────
+const GRAVITY   = 0.55;
+const FRICTION  = 0.82;
+const JUMP_FORCE = -13;
+const PLAYER_SPEED = 4.5;
+
+const W = 800, H = 480;
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+const scoreEl = document.getElementById('scoreDisplay');
+const livesEl = document.getElementById('livesDisplay');
+const coinsEl = document.getElementById('coinsDisplay');
+
+// ─────────────────────────────────────────────
+//  Level definition  (x, y, w, h, color)
+// ─────────────────────────────────────────────
+const LEVEL = {
+  bgColors: ['#87CEEB', '#b0e0ff'],
+
+  platforms: [
+    // Ground
+    { x: 0,    y: 430, w: 800, h: 50, color: '#5a8a2e' },
+    // Floating platforms
+    { x: 100,  y: 330, w: 120, h: 18, color: '#8B5E3C' },
+    { x: 280,  y: 260, w: 100, h: 18, color: '#8B5E3C' },
+    { x: 430,  y: 310, w: 130, h: 18, color: '#8B5E3C' },
+    { x: 600,  y: 240, w: 140, h: 18, color: '#8B5E3C' },
+    { x: 480,  y: 175, w: 100, h: 18, color: '#8B5E3C' },
+    { x: 170,  y: 185, w: 110, h: 18, color: '#8B5E3C' },
+    { x: 320,  y: 120, w: 130, h: 18, color: '#8B5E3C' },
+    { x: 620,  y: 140, w: 100, h: 18, color: '#8B5E3C' },
+    // Pits / steps
+    { x: 700,  y: 370, w: 100, h: 18, color: '#8B5E3C' },
+  ],
+
+  coins: [
+    // Ground level
+    {x:50,y:400},{x:80,y:400},{x:200,y:400},{x:240,y:400},{x:360,y:400},
+    // Platform 1
+    {x:120,y:300},{x:155,y:300},{x:190,y:300},
+    // Platform 2
+    {x:295,y:230},{x:325,y:230},{x:355,y:230},
+    // Platform 3
+    {x:450,y:280},{x:480,y:280},{x:510,y:280},
+    // Platform 4
+    {x:615,y:210},{x:650,y:210},{x:685,y:210},
+    // Platform 5
+    {x:490,y:145},{x:520,y:145},{x:550,y:145},
+    // Platform 6
+    {x:185,y:155},{x:215,y:155},{x:245,y:155},
+    // High platform
+    {x:335,y:90},{x:365,y:90},{x:395,y:90},{x:425,y:90},
+    // Top right
+    {x:630,y:110},{x:660,y:110},{x:690,y:110},
+  ],
+
+  enemies: [
+    { x: 130,  y: 398, platIdx: 0,  left: 130,  right: 300 },
+    { x: 350,  y: 398, platIdx: 0,  left: 300,  right: 500 },
+    { x: 550,  y: 398, platIdx: 0,  left: 500,  right: 680 },
+    { x: 110,  y: 298, platIdx: 1,  left: 100,  right: 200 },
+    { x: 295,  y: 228, platIdx: 2,  left: 280,  right: 360 },
+    { x: 440,  y: 278, platIdx: 3,  left: 430,  right: 540 },
+    { x: 610,  y: 208, platIdx: 4,  left: 600,  right: 720 },
+  ],
+
+  playerStart: { x: 40, y: 370 },
+  flagX: 740,
+};
+
+// ─────────────────────────────────────────────
+//  Game state
+// ─────────────────────────────────────────────
+let state, player, platforms, coins, enemies;
+let score, lives, coinsCollected, totalCoins;
+let keys = {};
+let cameraX = 0;
+let flashTimer = 0;
+
+// ─────────────────────────────────────────────
+//  Initialise / reset
+// ─────────────────────────────────────────────
+function initGame() {
+  state  = 'playing'; // 'playing' | 'dead' | 'win' | 'gameover'
+  score  = 0;
+  lives  = 3;
+  coinsCollected = 0;
+
+  platforms = LEVEL.platforms.map(p => ({ ...p }));
+
+  coins = LEVEL.coins.map(c => ({ x: c.x, y: c.y, r: 9, collected: false }));
+  totalCoins = coins.length;
+
+  enemies = LEVEL.enemies.map(e => ({
+    x: e.x, y: e.y,
+    w: 28, h: 24,
+    vx: 1.2, vy: 0,
+    left: e.left, right: e.right,
+    alive: true,
+    squishTimer: 0,
+  }));
+
+  player = {
+    x: LEVEL.playerStart.x,
+    y: LEVEL.playerStart.y,
+    w: 28, h: 34,
+    vx: 0, vy: 0,
+    onGround: false,
+    facingRight: true,
+    frame: 0,
+    frameTimer: 0,
+    invincible: 0,
+    deathTimer: 0,
+  };
+
+  cameraX = 0;
+  updateHUD();
+}
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  livesEl.textContent = lives;
+  coinsEl.textContent = coinsCollected;
+}
+
+// ─────────────────────────────────────────────
+//  Physics helpers
+// ─────────────────────────────────────────────
+function rectOverlap(ax,ay,aw,ah, bx,by,bw,bh) {
+  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+}
+
+function resolvePlatform(p, ent, prevY) {
+  const fromAbove = prevY + ent.h <= p.y + 2;
+  if (fromAbove && ent.vy >= 0) {
+    ent.y = p.y - ent.h;
+    ent.vy = 0;
+    ent.onGround = true;
+    return true;
+  }
+  // Side / bottom collisions for player only
+  if (ent === player) {
+    if (prevY + ent.h > p.y && prevY < p.y + p.h) {
+      // From left
+      if (ent.vx > 0 && ent.x + ent.w - ent.vx <= p.x + 2) {
+        ent.x = p.x - ent.w;
+        ent.vx = 0;
+      }
+      // From right
+      if (ent.vx < 0 && ent.x - ent.vx >= p.x + p.w - 2) {
+        ent.x = p.x + p.w;
+        ent.vx = 0;
+      }
+    }
+    // Hitting underside of platform
+    if (fromAbove === false && ent.vy < 0) {
+      const prevX = ent.x - ent.vx;
+      if (prevX + ent.w > p.x && prevX < p.x + p.w) {
+        ent.y = p.y + p.h;
+        ent.vy = 0;
+      }
+    }
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────
+//  Update
+// ─────────────────────────────────────────────
+function update() {
+  if (state === 'win' || state === 'gameover') return;
+
+  if (state === 'dead') {
+    player.deathTimer++;
+    if (player.deathTimer > 80) {
+      if (lives <= 0) {
+        state = 'gameover';
+      } else {
+        respawnPlayer();
+      }
+    }
+    return;
+  }
+
+  // ── Input ──
+  const left  = keys['ArrowLeft']  || keys['a'] || keys['A'];
+  const right = keys['ArrowRight'] || keys['d'] || keys['D'];
+  const jump  = keys['ArrowUp']    || keys['w'] || keys['W'] || keys[' '];
+
+  if (left)  { player.vx -= PLAYER_SPEED * 0.35; player.facingRight = false; }
+  if (right) { player.vx += PLAYER_SPEED * 0.35; player.facingRight = true;  }
+  if (!left && !right) player.vx *= FRICTION;
+
+  player.vx = Math.max(-PLAYER_SPEED, Math.min(PLAYER_SPEED, player.vx));
+
+  if (jump && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+  }
+
+  // ── Gravity ──
+  player.vy += GRAVITY;
+  if (player.vy > 15) player.vy = 15;
+
+  // ── Move & collide ──
+  const prevY = player.y;
+  player.x += player.vx;
+  player.y += player.vy;
+  player.onGround = false;
+
+  // World bounds
+  if (player.x < 0) { player.x = 0; player.vx = 0; }
+  if (player.x + player.w > LEVEL.platforms[0].w) {
+    player.x = LEVEL.platforms[0].w - player.w; player.vx = 0;
+  }
+
+  for (const p of platforms) {
+    if (rectOverlap(player.x, player.y, player.w, player.h, p.x, p.y, p.w, p.h)) {
+      resolvePlatform(p, player, prevY);
+    }
+  }
+
+  // Fall into pit
+  if (player.y > H + 40) killPlayer();
+
+  // ── Invincibility ──
+  if (player.invincible > 0) player.invincible--;
+
+  // ── Coin collection ──
+  for (const c of coins) {
+    if (!c.collected && rectOverlap(player.x, player.y, player.w, player.h,
+        c.x - c.r, c.y - c.r, c.r*2, c.r*2)) {
+      c.collected = true;
+      coinsCollected++;
+      score += 100;
+      updateHUD();
+    }
+  }
+
+  // ── Enemy update ──
+  for (const e of enemies) {
+    if (!e.alive) {
+      e.squishTimer--;
+      continue;
+    }
+
+    e.vy += GRAVITY;
+    if (e.vy > 15) e.vy = 15;
+
+    e.x += e.vx;
+    const eprevY = e.y;
+    e.y += e.vy;
+    e.onGround = false;
+
+    for (const p of platforms) {
+      if (rectOverlap(e.x, e.y, e.w, e.h, p.x, p.y, p.w, p.h)) {
+        resolvePlatform(p, e, eprevY);
+      }
+    }
+
+    // Patrol
+    if (e.x <= e.left)  { e.x = e.left;  e.vx = Math.abs(e.vx); }
+    if (e.x + e.w >= e.right) { e.x = e.right - e.w; e.vx = -Math.abs(e.vx); }
+
+    // Player–enemy collision
+    if (player.invincible === 0 &&
+        rectOverlap(player.x, player.y, player.w, player.h, e.x, e.y, e.w, e.h)) {
+      const playerBottom = player.y + player.h;
+      const enemyTop     = e.y;
+      const stomp = player.vy > 0 && playerBottom - player.vy <= enemyTop + 8;
+      if (stomp) {
+        e.alive = false;
+        e.squishTimer = 30;
+        player.vy = -8; // bounce
+        score += 200;
+        updateHUD();
+      } else {
+        killPlayer();
+      }
+    }
+  }
+
+  // ── Win condition ──
+  if (coinsCollected === totalCoins) {
+    state = 'win';
+    return;
+  }
+
+  // ── Flag touch ──
+  const flagRect = { x: LEVEL.flagX, y: 80, w: 14, h: 350 };
+  if (rectOverlap(player.x, player.y, player.w, player.h,
+      flagRect.x, flagRect.y, flagRect.w, flagRect.h)) {
+    state = 'win';
+    return;
+  }
+
+  // ── Animation ──
+  if (Math.abs(player.vx) > 0.5) {
+    player.frameTimer++;
+    if (player.frameTimer > 6) { player.frame = (player.frame + 1) % 3; player.frameTimer = 0; }
+  } else {
+    player.frame = 0;
+  }
+
+  // ── Camera ──
+  const targetX = player.x - W / 2 + player.w / 2;
+  cameraX += (targetX - cameraX) * 0.12;
+  cameraX = Math.max(0, Math.min(cameraX, LEVEL.platforms[0].w - W));
+
+  flashTimer = Math.max(0, flashTimer - 1);
+}
+
+function killPlayer() {
+  if (player.invincible > 0) return;
+  lives--;
+  updateHUD();
+  state = 'dead';
+  player.vy = JUMP_FORCE * 1.2;
+  player.vx = 0;
+  player.deathTimer = 0;
+  flashTimer = 15;
+}
+
+function respawnPlayer() {
+  player.x = LEVEL.playerStart.x;
+  player.y = LEVEL.playerStart.y;
+  player.vx = 0; player.vy = 0;
+  player.onGround = false;
+  player.invincible = 120;
+  player.deathTimer = 0;
+  cameraX = 0;
+  state = 'playing';
+}
+
+// ─────────────────────────────────────────────
+//  Drawing helpers
+// ─────────────────────────────────────────────
+function drawRect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x - cameraX, y, w, h);
+}
+
+function drawCircle(x, y, r, color) {
+  ctx.beginPath();
+  ctx.arc(x - cameraX, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawPlayer(p) {
+  const cx = p.x - cameraX;
+  const blink = p.invincible > 0 && Math.floor(p.invincible / 4) % 2 === 0;
+  if (blink) return;
+
+  ctx.save();
+  // Flip if facing left
+  if (!p.facingRight) {
+    ctx.scale(-1, 1);
+    ctx.translate(-(cx * 2 + p.w), 0);
+  }
+
+  // Hat (red)
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(cx - 2, p.y, p.w + 4, 10);
+  ctx.fillRect(cx + 4, p.y - 8, p.w - 6, 9);
+
+  // Face (skin)
+  ctx.fillStyle = '#f5cba7';
+  ctx.fillRect(cx, p.y + 10, p.w, 12);
+
+  // Eyes
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(cx + 8,  p.y + 13, 4, 4);
+  ctx.fillRect(cx + 17, p.y + 13, 4, 4);
+
+  // Mustache
+  ctx.fillStyle = '#6d4c41';
+  ctx.fillRect(cx + 4, p.y + 18, 20, 3);
+
+  // Body (blue overalls)
+  ctx.fillStyle = '#2980b9';
+  ctx.fillRect(cx + 2, p.y + 22, p.w - 4, 8);
+
+  // Legs - animated
+  ctx.fillStyle = '#1a5276';
+  const legOffset = p.onGround ? [0, 4, 8][p.frame] : 0;
+  ctx.fillRect(cx + 2,      p.y + 30, 10, 4 + legOffset);
+  ctx.fillRect(cx + p.w-12, p.y + 30, 10, 4 + (8 - legOffset));
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const cx = e.x - cameraX;
+  if (!e.alive) {
+    if (e.squishTimer > 0) {
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(cx, e.y + e.h - 6, e.w, 6);
+    }
+    return;
+  }
+
+  // Body (brown Goomba-like)
+  ctx.fillStyle = '#8B4513';
+  ctx.beginPath();
+  ctx.ellipse(cx + e.w/2, e.y + e.h/2 + 4, e.w/2, e.h/2 - 2, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(cx + 4,       e.y + 6, 8, 8);
+  ctx.fillRect(cx + e.w-12,  e.y + 6, 8, 8);
+  ctx.fillStyle = '#000';
+  // Angry eyes - slant based on direction
+  const eyeSlant = e.vx > 0 ? 2 : -2;
+  ctx.fillRect(cx + 5 + eyeSlant,      e.y + 8,  4, 4);
+  ctx.fillRect(cx + e.w-11 + eyeSlant, e.y + 8,  4, 4);
+
+  // Feet
+  ctx.fillStyle = '#5D3B1E';
+  ctx.fillRect(cx,         e.y + e.h - 6, 10, 6);
+  ctx.fillRect(cx + e.w-10, e.y + e.h - 6, 10, 6);
+}
+
+function drawCoin(c) {
+  if (c.collected) return;
+  const pulse = 1 + Math.sin(Date.now() / 300) * 0.08;
+  const r = c.r * pulse;
+  // Outer ring
+  ctx.beginPath();
+  ctx.arc(c.x - cameraX, c.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#f39c12';
+  ctx.fill();
+  // Inner shine
+  ctx.beginPath();
+  ctx.arc(c.x - cameraX - 2, c.y - 2, r * 0.45, 0, Math.PI * 2);
+  ctx.fillStyle = '#f9e79f';
+  ctx.fill();
+}
+
+function drawFlag() {
+  const fx = LEVEL.flagX - cameraX;
+  // Pole
+  ctx.fillStyle = '#aaa';
+  ctx.fillRect(fx, 80, 6, 350);
+  // Flag
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath();
+  ctx.moveTo(fx + 6, 80);
+  ctx.lineTo(fx + 46, 100);
+  ctx.lineTo(fx + 6, 120);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawBackground() {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#5ba0e0');
+  grad.addColorStop(1, '#c9e8ff');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Clouds (parallax)
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  const cloudOffsets = [0, 200, 450, 620];
+  const baseX = -cameraX * 0.3;
+  for (const ox of cloudOffsets) {
+    const cx = ((baseX + ox) % (W + 200)) - 100;
+    drawCloud(cx, 50);
+    drawCloud(cx + 230, 90);
+    drawCloud(cx + 480, 55);
+  }
+}
+
+function drawCloud(x, y) {
+  ctx.beginPath();
+  ctx.arc(x,      y,    28, 0, Math.PI * 2);
+  ctx.arc(x + 25, y - 10, 22, 0, Math.PI * 2);
+  ctx.arc(x + 50, y,    28, 0, Math.PI * 2);
+  ctx.arc(x + 25, y + 5, 20, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlatform(p) {
+  const x = p.x - cameraX;
+  // Top grass / surface
+  if (p.h >= 40) {
+    // Ground block
+    ctx.fillStyle = '#5a8a2e';
+    ctx.fillRect(x, p.y, p.w, 15);
+    ctx.fillStyle = '#3d6e1d';
+    ctx.fillRect(x, p.y + 15, p.w, p.h - 15);
+    // Grass detail
+    ctx.fillStyle = '#7ec850';
+    for (let gx = x + 5; gx < x + p.w - 5; gx += 16) {
+      ctx.fillRect(gx, p.y, 6, 6);
+      ctx.fillRect(gx + 3, p.y - 3, 4, 5);
+    }
+  } else {
+    // Floating platform
+    ctx.fillStyle = '#8B5E3C';
+    ctx.fillRect(x, p.y, p.w, p.h);
+    ctx.fillStyle = '#a87050';
+    ctx.fillRect(x + 2, p.y + 2, p.w - 4, 5);
+    ctx.fillStyle = '#6b4220';
+    ctx.fillRect(x, p.y + p.h - 4, p.w, 4);
+    // Wood grain lines
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1;
+    for (let lx = x + 20; lx < x + p.w - 10; lx += 20) {
+      ctx.beginPath();
+      ctx.moveTo(lx, p.y + 2);
+      ctx.lineTo(lx, p.y + p.h - 2);
+      ctx.stroke();
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Overlays
+// ─────────────────────────────────────────────
+function drawOverlay(title, sub, sub2) {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f5c542';
+  ctx.font = 'bold 56px "Courier New"';
+  ctx.fillText(title, W/2, H/2 - 50);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px "Courier New"';
+  ctx.fillText(sub, W/2, H/2 + 10);
+
+  if (sub2) {
+    ctx.fillStyle = '#aaa';
+    ctx.font = '18px "Courier New"';
+    ctx.fillText(sub2, W/2, H/2 + 48);
+  }
+
+  ctx.textAlign = 'left';
+}
+
+// ─────────────────────────────────────────────
+//  Main draw
+// ─────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  drawBackground();
+
+  // Flash on death
+  if (flashTimer > 0 && Math.floor(flashTimer / 3) % 2 === 0) {
+    ctx.fillStyle = 'rgba(255,50,50,0.3)';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  for (const p of platforms) drawPlatform(p);
+  for (const c of coins)     drawCoin(c);
+  drawFlag();
+  for (const e of enemies)   drawEnemy(e);
+  drawPlayer(player);
+
+  if (state === 'dead' || state === 'gameover') {
+    if (state === 'dead') {
+      drawOverlay('OUCH!', `${lives} ${lives === 1 ? 'life' : 'lives'} left`, 'Respawning...');
+    } else {
+      drawOverlay('GAME OVER', `Score: ${score}`, 'Press R to restart');
+    }
+  }
+
+  if (state === 'win') {
+    drawOverlay('YOU WIN!', `Score: ${score}  Coins: ${coinsCollected}/${totalCoins}`, 'Press R to play again');
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Game loop
+// ─────────────────────────────────────────────
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ─────────────────────────────────────────────
+//  Input
+// ─────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'r' || e.key === 'R') {
+    if (state === 'gameover' || state === 'win') initGame();
+  }
+  // Prevent page scroll with arrow keys / space
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// ─────────────────────────────────────────────
+//  Start
+// ─────────────────────────────────────────────
+initGame();
+loop();
+</script>
+</body>
+</html>
